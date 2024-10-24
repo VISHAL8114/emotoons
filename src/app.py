@@ -6,6 +6,7 @@ import json
 from transformers import pipeline
 from datetime import datetime
 from huggingface_hub import login
+import random
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS
@@ -46,15 +47,35 @@ api_key = "AIzaSyC3dknAhgrOWfn689dsltqrTLPBU6z4z5g"
 
 # Function to interact with the Gemini API
 def chat_with_gemini(prompt):
-    # Custom responses for specific commands
-    if prompt.lower().startswith("play the song"):
-        song_name = prompt[len("play the song "):].strip()
-        return f"Song playing: {song_name}"
+    if prompt.lower().startswith("play any song"):
+        response = requests.get('http://127.0.0.1:3001/api/songs')
+        if response.status_code == 200:
+            songs = response.json()
+            if songs:
+                random_song = random.choice(songs)
+                return f"Playing random song: {random_song}", random_song
+            else:
+                return "No songs available to play.", None
+        else:
+            return f"Error fetching songs: {response.status_code}, {response.text}", None
+    
+    elif prompt.lower().startswith("play song"):
+        song_name = prompt[len("play song "):].strip().lower()
+        response = requests.get('http://127.0.0.1:3001/api/songs')
+        if response.status_code == 200:
+            songs = response.json()
+            matching_song = next((song for song in songs if song_name in song.lower()), None)
+            if matching_song:
+                return f"Playing song: {matching_song}", matching_song
+            else:
+                return f"Song '{song_name}' not found.", None
+        else:
+            return f"Error fetching songs: {response.status_code}, {response.text}", None
+
     elif prompt.lower().startswith("add the song"):
         song_name = prompt[len("add the song "):].strip()
-        return f"Successfully added the song: {song_name} to queue"
+        return f"Successfully added the song: {song_name} to queue", None
 
-    # Call the Gemini API for other responses
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
     headers = {
         "Content-Type": "application/json"
@@ -72,36 +93,30 @@ def chat_with_gemini(prompt):
     response = requests.post(url, headers=headers, data=json.dumps(data))
     
     if response.status_code == 200:
-        # Get the response JSON
         response_json = response.json()
-        
-        # Access the correct structure in the response and return only the answer
-        return response_json['candidates'][0]['content']['parts'][0]['text'].strip()
+        return response_json['candidates'][0]['content']['parts'][0]['text'].strip(), None
     else:
-        return f"Error: {response.status_code}, {response.text}"
+        return f"Error: {response.status_code}, {response.text}", None
 
 @app.route('/chat', methods=['POST'])
 def chat():
     data = request.json
     user_input = data.get('input', '')
 
-    # Get response from Gemini API or customized response
-    response = chat_with_gemini(user_input)
+    response, song_name = chat_with_gemini(user_input)
 
-    # Detect emotion (runs on GPU if available, otherwise on CPU)
     emotion_result = emotion_pipeline(user_input)
     detected_emotion = emotion_result[0]['label'].lower()
     priority = emotion_priority(detected_emotion)
 
-    # Append emotion and timestamp
     emotions.append(priority)
     timestamps.append(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
-    # Return the chatbot response and detected emotion
     return jsonify({
         'response': response,
         'detected_emotion': detected_emotion,
-        'priority': priority
+        'priority': priority,
+        'song_name': song_name
     })
 
 @app.route('/plot', methods=['GET'])
